@@ -543,8 +543,11 @@ def get_available_models():
     })
 
 if __name__ == '__main__':
-    # Use Gunicorn in production (e.g., on Render) by setting the PORT environment variable
-    # For local development, it will run on 5000 with debug enabled
-    port = int(os.environ.get("PORT", 5000))
+    port_str = os.environ.get("PORT")
+    if port_str and port_str.isdigit(): # Check if it's not empty and is a digit string
+        port = int(port_str)
+    else:
+        port = 5000 # Default port for local development
+   
     debug_mode = os.environ.get("FLASK_DEBUG", "1") == "1" # Default to debug true for local
     app.run(debug=debug_mode, host='0.0.0.0', port=port)
