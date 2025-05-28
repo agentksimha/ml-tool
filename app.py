@@ -10,6 +10,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import mean_squared_error, accuracy_score, confusion_matrix
 from sklearn.svm import SVC, SVR
 import traceback
+import os 
 
 # Import your ML functions (assuming they're in a separate file)
 # If they're in the same file, you can include them directly
