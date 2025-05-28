@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify,send_from_directory
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
@@ -27,6 +27,9 @@ except ImportError:
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+@app.route('/')
+def serve_index():
+    return send_from_directory('.', 'index.html')
 
 # Your ML functions (copied from your original code)
 def pca(X, k):
