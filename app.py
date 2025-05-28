@@ -25,6 +25,7 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
+@app.route("/")
 # Your ML functions (copied from your original code)
 def pca(X, k):
     x_standardised = (X - np.mean(X, axis=0)) / (np.std(X, axis=0))
