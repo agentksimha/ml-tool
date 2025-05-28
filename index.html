@@ -253,15 +253,15 @@
             .container {
                 padding: 10px;
             }
-
+            
             .main-content {
                 padding: 20px;
             }
-
+            
             .config-section {
                 grid-template-columns: 1fr;
             }
-
+            
             .header h1 {
                 font-size: 2rem;
             }
@@ -328,7 +328,11 @@
                     <div class="form-group">
                         <label for="modelType">Model Type</label>
                         <select id="modelType">
-                            </select>
+                            <option value="lin_reg_with_model">Linear Regression (Sklearn)</option>
+                            <option value="lin_reg_scratch with batch gd">Linear Regression (Batch GD)</option>
+                            <option value="lin_reg_scratch with stochastic gd">Linear Regression (Stochastic GD)</option>
+                            <option value="lin_reg_nn">Linear Regression (Neural Network)</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label for="scaler">Scaler</label>
@@ -361,7 +365,7 @@
                 </div>
 
                 <div class="config-group">
-                    <h4>🧠 Neural Network & Trees</h4>
+                    <h4>🧠 Neural Network</h4>
                     <div class="form-group">
                         <label for="n1">Hidden Layer 1 Neurons</label>
                         <input type="number" id="n1" value="64" min="1" max="1000">
@@ -371,11 +375,11 @@
                         <input type="number" id="n2" value="32" min="1" max="1000">
                     </div>
                     <div class="form-group">
-                        <label for="n3">Output Layer Neurons (NN Only)</label>
+                        <label for="n3">Output Layer Neurons</label>
                         <input type="number" id="n3" value="1" min="1" max="1000">
                     </div>
                     <div class="form-group">
-                        <label for="maxDepth">Max Depth (Trees Only)</label>
+                        <label for="maxDepth">Max Depth (Trees)</label>
                         <input type="number" id="maxDepth" value="3" min="1" max="20">
                     </div>
                 </div>
@@ -383,7 +387,7 @@
 
             <div class="error" id="errorMessage"></div>
             <div class="success" id="successMessage"></div>
-
+            
             <div class="loading" id="loading">
                 <div class="spinner"></div>
                 <p>Processing your data and training the model...</p>
@@ -403,12 +407,6 @@
         let xTrainData = null;
         let yTrainData = null;
         let xTestData = null;
-
-        // Function to determine the base URL for API calls
-        // Use a relative path if deploying to the same origin, or an absolute URL for a separate backend.
-        // For Render, if Flask is on the same service, use relative path.
-        // If Flask is a separate service, use its Render URL.
-        const API_BASE_URL = window.location.origin; // Assuming Flask is served from the same domain/port
 
         // File upload handlers
         function setupFileUpload(uploadId, fileInputId, infoId, dataVar) {
@@ -445,12 +443,12 @@
             // File input change
             fileInput.addEventListener('change', (e) => {
                 if (e.target.files.length > 0) {
-                    handleFile(e.target.files[0], fileInfo, dataVar); // filePath is not always available from e.target.files[0]
+                    handleFile(e.target.files[0], fileInfo, dataVar, e.target.files[0].webkitRelativePath || e.target.files[0].name);
                 }
             });
         }
 
-        function handleFile(file, infoElement, dataVar) {
+        function handleFile(file, infoElement, dataVar, filePath) {
             if (!file.name.endsWith('.csv')) {
                 showError('Please upload a CSV file');
                 return;
@@ -461,30 +459,21 @@
                 try {
                     const csv = e.target.result;
                     const lines = csv.split('\n').filter(line => line.trim());
-                    if (lines.length === 0) {
-                        throw new Error("CSV file is empty or contains no data.");
-                    }
                     const headers = lines[0].split(',').map(h => h.trim());
-                    const rows = lines.slice(1).map(line =>
+                    const rows = lines.slice(1).map(line => 
                         line.split(',').map(cell => {
                             const num = parseFloat(cell.trim());
-                            return isNaN(num) ? cell.trim() : num; // Keep non-numeric as string, convert numeric
+                            return isNaN(num) ? cell.trim() : num;
                         })
                     );
 
-                    // Infer directory from file path if possible, otherwise use '.'
-                    // Note: webkitRelativePath is a non-standard property and not always available.
-                    const fullPath = file.webkitRelativePath || file.name;
-                    const directory = fullPath.substring(0, fullPath.lastIndexOf('/')) || '.';
-
-
                     // Store data globally with file path info
-                    const dataObj = {
-                        headers,
-                        rows,
+                    const dataObj = { 
+                        headers, 
+                        rows, 
                         fileName: file.name,
-                        filePath: fullPath,
-                        directory: directory // Use inferred directory
+                        filePath: filePath || file.name,
+                        directory: filePath ? filePath.substring(0, filePath.lastIndexOf('/')) || '.' : '.'
                     };
 
                     if (dataVar === 'xTrain') xTrainData = dataObj;
@@ -510,68 +499,45 @@
         setupFileUpload('yTrainUpload', 'yTrainFile', 'yTrainInfo', 'yTrain');
         setupFileUpload('xTestUpload', 'xTestFile', 'xTestInfo', 'xTest');
 
-        // Function to fetch available models from the backend
-        async function fetchAvailableModels() {
-            try {
-                const response = await fetch(`${API_BASE_URL}/models`);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                return data.models;
-            } catch (error) {
-                console.error("Failed to fetch available models:", error);
-                showError("Failed to fetch available models from backend. Neural network models might not be available.");
-                // Return default models if API call fails
-                return {
-                    regression: [
-                        { value: 'lin_reg_with_model', text: 'Linear Regression (Sklearn)' },
-                        { value: 'lin_reg_scratch with batch gd', text: 'Linear Regression (Batch GD)' },
-                        { value: 'lin_reg_scratch with stochastic gd', text: 'Linear Regression (Stochastic GD)' },
-                        { value: 'lin_reg_scratch with mini-batch gd', text: 'Linear Regression (Mini-batch GD)' },
-                        { value: 'regression with svr', text: 'Support Vector Regression' }
-                    ],
-                    classification: [
-                        { value: 'log_reg_withmodel', text: 'Logistic Regression (Sklearn)' },
-                        { value: 'log_reg_scratch', text: 'Logistic Regression (Scratch)' },
-                        { value: 'classify with tree', text: 'Decision Tree' },
-                        { value: 'classify with SVC', text: 'Support Vector Classifier' }
-                    ]
-                };
-            }
-        }
-
         // Task type change handler
-        document.getElementById('taskType').addEventListener('change', async function() {
+        document.getElementById('taskType').addEventListener('change', function() {
             const taskType = this.value;
             const modelSelect = document.getElementById('modelType');
-            modelSelect.innerHTML = ''; // Clear existing options
-
-            const availableModels = await fetchAvailableModels();
-
-            let optionsToDisplay = [];
+            
+            modelSelect.innerHTML = '';
+            
             if (taskType === 'regression') {
-                // Ensure regression options are objects with value and text
-                optionsToDisplay = availableModels.regression.map(m => typeof m === 'string' ? { value: m, text: formatModelName(m) } : m);
-            } else { // classification
-                // Ensure classification options are objects with value and text
-                optionsToDisplay = availableModels.classification.map(m => typeof m === 'string' ? { value: m, text: formatModelName(m) } : m);
+                const regressionOptions = [
+                    { value: 'lin_reg_with_model', text: 'Linear Regression (Sklearn)' },
+                    { value: 'lin_reg_scratch with batch gd', text: 'Linear Regression (Batch GD)' },
+                    { value: 'lin_reg_scratch with stochastic gd', text: 'Linear Regression (Stochastic GD)' },
+                    { value: 'lin_reg_scratch with mini-batch gd', text: 'Linear Regression (Mini-batch GD)' },
+                    { value: 'lin_reg_nn', text: 'Linear Regression (Neural Network)' },
+                    { value: 'regression with svr', text: 'Support Vector Regression' }
+                ];
+                regressionOptions.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt.value;
+                    option.textContent = opt.text;
+                    modelSelect.appendChild(option);
+                });
+            } else {
+                const classificationOptions = [
+                    { value: 'log_reg_withmodel', text: 'Logistic Regression (Sklearn)' },
+                    { value: 'log_reg_scratch', text: 'Logistic Regression (Scratch)' },
+                    { value: 'log_regwithnn', text: 'Logistic Regression (Neural Network)' },
+                    { value: 'classify with tree', text: 'Decision Tree' },
+                    { value: 'classify with SVC', text: 'Support Vector Classifier' },
+                    { value: 'classify with nn multiclass', text: 'Neural Network (Multiclass)' }
+                ];
+                classificationOptions.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt.value;
+                    option.textContent = opt.text;
+                    modelSelect.appendChild(option);
+                });
             }
-
-            optionsToDisplay.forEach(opt => {
-                const option = document.createElement('option');
-                option.value = opt.value;
-                option.textContent = opt.text;
-                modelSelect.appendChild(option);
-            });
         });
-
-        // Helper to format model names for display
-        function formatModelName(name) {
-            // Replace underscores with spaces, capitalize first letter of each word
-            return name.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-        }
-
 
         // Run button handler
         document.getElementById('runButton').addEventListener('click', async function() {
@@ -583,7 +549,6 @@
             showLoading();
             hideError();
             hideSuccess();
-            document.getElementById('resultsSection').style.display = 'none'; // Hide previous results
 
             try {
                 const config = {
@@ -592,6 +557,7 @@
                     epochs: parseInt(document.getElementById('epochs').value),
                     learning_rate: parseFloat(document.getElementById('learningRate').value),
                     batch_size: parseInt(document.getElementById('batchSize').value),
+                    // n is no longer used, batch_size is preferred for consistency
                     n1: parseInt(document.getElementById('n1').value),
                     n2: parseInt(document.getElementById('n2').value),
                     n3: parseInt(document.getElementById('n3').value),
@@ -604,197 +570,221 @@
 
                 if (taskType === 'regression') {
                     config.regression = modelType;
-                    config.classification = null; // Ensure only one is set
                 } else {
                     config.classification = modelType;
-                    config.regression = null; // Ensure only one is set
                 }
 
-                // Prepare request data
                 const requestData = {
                     x_train: xTrainData,
                     y_train: yTrainData,
-                    x_test: xTestData || null, // Send null if no test data
+                    x_test: xTestData,
                     config: config
                 };
 
-                // Make API call to backend
-                const response = await fetch(`${API_BASE_URL}/predict`, {
+                // Actual API call to the backend
+                const response = await fetch('/predict', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(requestData),
+                    body: JSON.stringify(requestData)
                 });
 
-                const result = await response.json();
-
-                if (response.ok) {
-                    displayResults(result);
-                    showSuccess('Model trained successfully!');
-                } else {
-                    showError(`Error: ${result.error || 'Unknown error'}. Check server logs for details.`);
-                    console.error("Backend Error:", result);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Unknown error from server');
                 }
 
+                const result = await response.json(); // This is the actual result from your Python backend
+                
+                displayResults(result);
+                showSuccess('Model trained successfully!');
+                
             } catch (error) {
-                showError('Error communicating with ML pipeline: ' + error.message);
-                console.error("Frontend Fetch Error:", error);
+                showError('Error running ML pipeline: ' + error.message);
             } finally {
                 hideLoading();
             }
         });
 
-
         function displayResults(results) {
             const resultsContent = document.getElementById('resultsContent');
-            const isClassification = results.training_accuracy !== undefined; // Check if training_accuracy exists for classification
-            const isRegression = results.training_mse !== undefined; // Check if training_mse exists for regression
-
-            let modelPerformanceHTML = `<div class="result-item"><h4>📊 Model Performance</h4>`;
-            modelPerformanceHTML += `<p><strong>Model:</strong> ${formatModelName(results.model_type)}</p>`;
-
-            if (isRegression) {
-                modelPerformanceHTML += `<p><strong>Training MSE:</strong> ${results.training_mse.toFixed(4)}</p>`;
-            } else if (isClassification) {
-                modelPerformanceHTML += `<p><strong>Training Accuracy:</strong> ${(results.training_accuracy * 100).toFixed(2)}%</p>`;
-            }
-            modelPerformanceHTML += `</div>`;
-
-
+            const isClassification = results.model_type && results.model_type.includes('classify') || results.model_type && results.model_type.includes('log_reg'); // Check if classification based on model type
+            
+            let resultsHTML = `
+                <div class="result-item">
+                    <h4>📊 Model Performance</h4>
+                    <p><strong>Model:</strong> ${results.model_type}</p>
+                    ${isClassification ? 
+                        `<p><strong>Training Accuracy:</strong> ${(results.training_accuracy * 100).toFixed(2)}%</p>` :
+                        `<p><strong>Training MSE:</strong> ${results.training_mse.toFixed(4)}</p>`
+                    }
+                </div>
+            `;
+            
+            // Display Coefficients / Feature Importance
             let coefficientsHTML = '';
-            if (results.coefficients && results.coefficients.length > 0) {
+            if (results.coefficients && Array.isArray(results.coefficients)) {
                 coefficientsHTML = `
-                    <div class="result-item">
-                        <h4>🔢 Model Coefficients / Feature Importances</h4>
-                        <div style="max-height: 200px; overflow-y: auto;">
-                            ${results.coefficients.map((coef, index) =>
-                                `<p><strong>${results.data_info.features[index] || `Feature ${index + 1}`}:</strong> ${coef.toFixed(4)}</p>`
-                            ).join('')}
-                        </div>
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        ${results.coefficients.map((coef, i) =>
+                            `<p><strong>PC${i + 1}:</strong> ${coef.toFixed(4)}</p>`
+                        ).join('')}
                     </div>
                 `;
-            } else if (results.intercept !== undefined && results.coefficients === undefined) {
-                 // For models like Logistic Regression (Scratch) or Linear Regression (Scratch) that return intercept separately
-                coefficientsHTML = `
-                    <div class="result-item">
-                        <h4>🔢 Model Intercept</h4>
-                        <p><strong>Intercept:</strong> ${results.intercept.toFixed(4)}</p>
+            } else if (results.feature_importances && Array.isArray(results.feature_importances)) { // For Decision Tree
+                 coefficientsHTML = `
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        ${results.feature_importances.map((imp, i) =>
+                            // Assuming feature_importances is an array of numbers, map to PC labels
+                            `<p><strong>PC${i + 1}:</strong> ${imp.toFixed(3)}</p>`
+                        ).join('')}
                     </div>
                 `;
+            } else {
+                 coefficientsHTML = `<p>No coefficients/feature importances available for this model.</p>`;
             }
 
+            resultsHTML += `
+                <div class="result-item">
+                    <h4>🔢 Model Coefficients / Feature Importance</h4>
+                    ${coefficientsHTML}
+                </div>
+            `;
 
-            let predictionsHTML = `
+            resultsHTML += `
                 <div class="result-item">
                     <h4>🎯 Sample Training Predictions (First 10)</h4>
-                    <p>${results.train_predictions.slice(0, 10).map(p =>
+                    <p>${results.train_predictions.slice(0, 10).map(p => 
                         typeof p === 'number' ? p.toFixed(3) : p
                     ).join(', ')}</p>
                 </div>
             `;
-
-            let testPredictionsHTML = '';
+            
             if (results.test_predictions && results.test_predictions.length > 0) {
-                testPredictionsHTML = `
+                resultsHTML += `
                 <div class="result-item">
                     <h4>🧪 Sample Test Predictions (First 10)</h4>
-                    <p>${results.test_predictions.slice(0, 10).map(p =>
+                    <p>${results.test_predictions.slice(0, 10).map(p => 
                         typeof p === 'number' ? p.toFixed(3) : p
                     ).join(', ')}</p>
                 </div>
                 `;
             }
-
-            let confusionMatrixHTML = '';
-            let classificationMetricsHTML = '';
+            
             if (isClassification && results.confusion_matrix) {
                 const cm = results.confusion_matrix;
-                // Assuming confusion matrix is [[TN, FP], [FN, TP]]
-                const true_negative = cm[0][0];
-                const false_positive = cm[0][1];
-                const false_negative = cm[1][0];
-                const true_positive = cm[1][1];
+                
+                // Assuming cm is a 2x2 matrix for binary classification for simplicity of display
+                // If multiclass, this display needs to be dynamic.
+                const tn = cm[0][0]; // True Negative
+                const fp = cm[0][1]; // False Positive
+                const fn = cm[1][0]; // False Negative
+                const tp = cm[1][1]; // True Positive
 
-                const precision = true_positive / (true_positive + false_positive);
-                const recall = true_positive / (true_positive + false_negative);
-                const f1_score = 2 * (precision * recall) / (precision + recall);
-
-                confusionMatrixHTML = `
+                // Calculate metrics based on the confusion matrix
+                const precision = tp / (tp + fp) || 0;
+                const recall = tp / (tp + fn) || 0;
+                const f1_score = 2 * (precision * recall) / (precision + recall) || 0;
+                const accuracy = (tp + tn) / (tp + tn + fp + fn) || 0;
+                
+                resultsHTML += `
                 <div class="result-item">
                     <h4>🎯 Confusion Matrix</h4>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0;">
                         <div style="text-align: center; padding: 10px; background: #e6f3ff; border-radius: 8px;">
-                            <strong>True Negative</strong><br>${true_negative}
+                            <strong>True Negative</strong><br>${tn}
                         </div>
                         <div style="text-align: center; padding: 10px; background: #ffe6e6; border-radius: 8px;">
-                            <strong>False Positive</strong><br>${false_positive}
+                            <strong>False Positive</strong><br>${fp}
                         </div>
                         <div style="text-align: center; padding: 10px; background: #ffe6e6; border-radius: 8px;">
-                            <strong>False Negative</strong><br>${false_negative}
+                            <strong>False Negative</strong><br>${fn}
                         </div>
                         <div style="text-align: center; padding: 10px; background: #e6ffe6; border-radius: 8px;">
-                            <strong>True Positive</strong><br>${true_positive}
+                            <strong>True Positive</strong><br>${tp}
                         </div>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <p><strong>Precision:</strong> ${(precision * 100).toFixed(2)}%</p>
+                        <p><strong>Recall:</strong> ${(recall * 100).toFixed(2)}%</p>
+                        <p><strong>F1-Score:</strong> ${(f1_score * 100).toFixed(2)}%</p>
+                        <p><strong>Accuracy:</strong> ${(accuracy * 100).toFixed(2)}%</p>
                     </div>
                 </div>
                 `;
-
-                classificationMetricsHTML = `
-                <div class="result-item">
-                    <h4>📊 Classification Metrics</h4>
-                    <p><strong>Precision:</strong> ${(precision * 100).toFixed(2)}%</p>
-                    <p><strong>Recall:</strong> ${(recall * 100).toFixed(2)}%</p>
-                    <p><strong>F1-Score:</strong> ${(f1_score * 100).toFixed(2)}%</p>
-                </div>
-                `;
             }
-
-            let lossHistoryHTML = '';
+            
+            // Assuming the backend provides loss_history as a direct array of numbers
             if (results.loss_history && results.loss_history.length > 0) {
-                const finalLoss = results.loss_history[results.loss_history.length - 1].toFixed(4);
-                const initialLoss = results.loss_history[0].toFixed(4);
-                lossHistoryHTML = `
+                const finalLoss = results.loss_history[results.loss_history.length - 1];
+                const initialLoss = results.loss_history[0];
+                resultsHTML += `
                     <div class="result-item">
                         <h4>📈 Training Loss History</h4>
-                        <p>Final Loss: ${finalLoss}</p>
-                        <small>Loss decreased from ${initialLoss} to ${finalLoss}</small>
-                        </div>
+                        <p>Final Loss: ${finalLoss.toFixed(4)}</p>
+                        <small>Loss decreased from ${initialLoss.toFixed(4)} to ${finalLoss.toFixed(4)}</small>
+                    </div>
                 `;
             }
 
-            // Generated files section (mocked for now, as actual file generation on server isn't typically downloaded this way)
-            // For a real app, the backend would return URLs to download these files.
-            let generatedFilesHTML = `
-                <div class="result-item">
-                    <h4>💾 Generated Files (Mocked)</h4>
-                    <p>In a real application, prediction and model files would be generated and available for download. These are simulated:</p>
-                    <ul style="margin: 10px 0; padding-left: 20px;">
-                        <li><strong>predictions.csv</strong> - Contains training predictions.</li>
-                        ${results.test_predictions ? '<li><strong>test_predictions.csv</strong> - Contains test predictions.</li>' : ''}
-                        ${results.coefficients ? '<li><strong>model_coefficients.csv</strong> - Contains model coefficients/feature importances.</li>' : ''}
-                        ${isClassification && results.confusion_matrix ? '<li><strong>confusion_matrix_metrics.csv</strong> - Contains classification metrics.</li>' : ''}
-                    </ul>
+            // --- Actual File Download Section ---
+            let downloadButtonsHTML = '';
+            const filesToDownload = [];
+
+            if (results.predictions_csv) {
+                filesToDownload.push({ name: 'predictions.csv', content: results.predictions_csv });
+            }
+            if (results.coefficients_csv) {
+                filesToDownload.push({ name: 'model_coefficients.csv', content: results.coefficients_csv });
+            }
+            if (results.confusion_matrix_csv) {
+                filesToDownload.push({ name: 'confusion_matrix_metrics.csv', content: results.confusion_matrix_csv });
+            }
+            // Add other CSV types if your backend provides them (e.g., test_predictions_csv)
+            // if (results.test_predictions_csv) {
+            //      filesToDownload.push({ name: 'test_predictions.csv', content: results.test_predictions_csv });
+            // }
+
+            if (filesToDownload.length > 0) {
+                downloadButtonsHTML = `
+                    <p>Click to download the generated result files:</p>
                     <div style="margin-top: 15px;">
-                        <button onclick="alert('Download functionality would be implemented on the backend.');"
-                                style="margin: 5px; padding: 8px 15px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                            📥 Download Results (Simulated)
-                         </button>
+                        ${filesToDownload.map(file => `
+                            <button onclick="downloadFile('${file.name}', \`${file.content}\`)"
+                                    style="margin: 5px; padding: 8px 15px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                                📥 Download ${file.name}
+                            </button>
+                        `).join('')}
                     </div>
+                `;
+            } else {
+                downloadButtonsHTML = `<p>No downloadable files generated by this model.</p>`;
+            }
+
+            resultsHTML += `
+                <div class="result-item">
+                    <h4>💾 Download Results</h4>
+                    ${downloadButtonsHTML}
                 </div>
             `;
-
-            resultsContent.innerHTML =
-                modelPerformanceHTML +
-                coefficientsHTML +
-                predictionsHTML +
-                testPredictionsHTML +
-                confusionMatrixHTML +
-                classificationMetricsHTML +
-                lossHistoryHTML +
-                generatedFilesHTML;
-
+            // --- End of Actual File Download Section ---
+            
+            resultsContent.innerHTML = resultsHTML;
             document.getElementById('resultsSection').style.display = 'block';
+        }
+
+        // Function to download generated files (already good)
+        function downloadFile(filename, content) {
+            const blob = new Blob([content], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
         }
 
         // Utility functions
@@ -802,7 +792,6 @@
             const errorEl = document.getElementById('errorMessage');
             errorEl.textContent = message;
             errorEl.style.display = 'block';
-            console.error("UI Error:", message);
         }
 
         function hideError() {
@@ -829,10 +818,8 @@
             document.getElementById('runButton').disabled = false;
         }
 
-        // Initialize by fetching available models and populating the dropdown
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('taskType').dispatchEvent(new Event('change'));
-        });
+        // Initialize
+        document.getElementById('taskType').dispatchEvent(new Event('change'));
     </script>
 </body>
 </html>

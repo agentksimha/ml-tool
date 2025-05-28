@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify,send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
@@ -27,6 +27,7 @@ except ImportError:
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
 @app.route('/')
 def serve_index():
     return send_from_directory('.', 'index.html')
@@ -204,13 +205,14 @@ def classify_with_model(X, y):
     cm = confusion_matrix(y, train_preds)
     # For consistency, return coefficients and a dummy loss history
     loss_history = [1 - acc] * 20 # Example: (1 - accuracy) as a simple loss proxy
-    return model.coef_.tolist(), train_preds.tolist(), acc, cm.tolist(), loss_history
+    # FIX: Flatten coef_ to a 1D list as it's often 2D (1, n_features) for binary classification
+    return model.coef_.flatten().tolist(), train_preds.tolist(), acc, cm.tolist(), loss_history
 
 def classify_with_svc(X, X_test, y):
     model = SVC()
     model.fit(X, y)
     train_pred = model.predict(X)
-    test_preds = model.predict(X_test) if X_test is not None and X_test.shape[0] > 0 else None
+    test_preds = model.predict(X_Test) if X_Test is not None and X_Test.shape[0] > 0 else None
     acc = accuracy_score(y, train_pred)
     cm = confusion_matrix(y, train_pred)
     # SVC does not directly provide coefficients in the same way as linear models
@@ -255,134 +257,241 @@ def pipeline(X, k, y, x_test=None, scaler='StandardScaler', regression=None, cla
         # If no scaler, just apply PCA to x_test directly
         x_test_transformed = x_test @ pc_components if x_test is not None and x_test.shape[0] > 0 else None
 
+    # Initialize variables for output CSVs
+    predictions_csv_content = None
+    coefficients_csv_content = None
+    confusion_matrix_csv_content = None
+
     # Run the specified model
     if regression == 'lin_reg_scratch with batch gd':
         # lin_reg_scratch returns: [b] + m.tolist(), l, y_pred, final_loss
         coefs_and_intercept, loss_hist, train_preds, final_loss = lin_reg_scratch(x_transformed, y, epochs, L=learning_rate, gd='batch')
+        coefficients = coefs_and_intercept[1:] # Exclude intercept
+        intercept = coefs_and_intercept[0]
+        # Generate predictions CSV
+        predictions_df = pd.DataFrame({"Actual": y.flatten(), "Predicted": train_preds})
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        # Generate coefficients CSV
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(coefficients))], "Coefficient": coefficients})
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
+
         return {
-            "coefficients": coefs_and_intercept[1:], # Exclude intercept for now, it's handled separately
-            "intercept": coefs_and_intercept[0],
+            "coefficients": coefficients,
+            "intercept": intercept,
             "train_predictions": train_preds,
             "training_mse": final_loss,
             "loss_history": loss_hist,
-            "test_predictions": None # Scratch models don't handle test predictions
+            "test_predictions": None,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content
         }
     elif regression == 'lin_reg_scratch with stochastic gd':
         coefs_and_intercept, loss_hist, train_preds, final_loss = lin_reg_scratch(x_transformed, y, epochs, L=learning_rate, gd='stochastic')
+        coefficients = coefs_and_intercept[1:]
+        intercept = coefs_and_intercept[0]
+        predictions_df = pd.DataFrame({"Actual": y.flatten(), "Predicted": train_preds})
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(coefficients))], "Coefficient": coefficients})
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
         return {
-            "coefficients": coefs_and_intercept[1:],
-            "intercept": coefs_and_intercept[0],
+            "coefficients": coefficients,
+            "intercept": intercept,
             "train_predictions": train_preds,
             "training_mse": final_loss,
             "loss_history": loss_hist,
-            "test_predictions": None
+            "test_predictions": None,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content
         }
     elif regression == 'lin_reg_scratch with mini-batch gd':
         coefs_and_intercept, loss_hist, train_preds, final_loss = lin_reg_scratch(x_transformed, y, epochs, batch_size, learning_rate, 'mini-batch')
+        coefficients = coefs_and_intercept[1:]
+        intercept = coefs_and_intercept[0]
+        predictions_df = pd.DataFrame({"Actual": y.flatten(), "Predicted": train_preds})
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(coefficients))], "Coefficient": coefficients})
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
         return {
-            "coefficients": coefs_and_intercept[1:],
-            "intercept": coefs_and_intercept[0],
+            "coefficients": coefficients,
+            "intercept": intercept,
             "train_predictions": train_preds,
             "training_mse": final_loss,
             "loss_history": loss_hist,
-            "test_predictions": None
+            "test_predictions": None,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content
         }
     elif regression == 'lin_reg_with_model':
-        # lin_reg_model returns: model.coef_, train_preds, mse, loss_history
         coefs, train_preds, mse, loss_hist = lin_reg_model(x_transformed, y)
+        predictions_df = pd.DataFrame({"Actual": y.flatten(), "Predicted": train_preds})
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(coefs))], "Coefficient": coefs[0]}) # coefs[0] because lin_reg_model returns [[val1, val2]]
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
+
         return {
             "coefficients": coefs,
             "train_predictions": train_preds,
             "training_mse": mse,
             "loss_history": loss_hist,
-            "test_predictions": None # Sklearn model does not predict on test by default here
+            "test_predictions": None,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content
         }
     elif regression == 'lin_reg_nn':
-        # lin_reg_nn returns: train_preds, test_preds, mse, loss_history
         train_preds, test_preds, mse, loss_hist = lin_reg_nn(x_transformed, y, x_test_transformed, epochs, batch_size, n1, n2, n3)
+        preds_data = {"Actual": y.flatten(), "Train_Predicted": train_preds}
+        if test_preds is not None:
+            preds_data["Test_Predicted"] = test_preds
+        predictions_df = pd.DataFrame(preds_data)
+        predictions_csv_content = predictions_df.to_csv(index=False)
+
         return {
             "train_predictions": train_preds,
             "test_predictions": test_preds,
             "training_mse": mse,
             "loss_history": loss_hist,
-            "coefficients": None # NNs don't have simple coefficients
+            "coefficients": None,
+            "predictions_csv": predictions_csv_content
         }
     elif classification == 'log_reg_scratch':
-        # log_reg_scratch returns: [b] + m.tolist(), l, y_pred, acc, cm
         params, loss_hist, train_preds, acc, cm = log_reg_scratch(x_transformed, y, epochs, learning_rate)
+        coefficients = params[1:]
+        intercept = params[0]
+        predictions_df = pd.DataFrame({"Actual": y.flatten(), "Predicted": train_preds})
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(coefficients))], "Coefficient": coefficients})
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
+        confusion_matrix_df = pd.DataFrame(cm, index=["Actual_0", "Actual_1"], columns=["Predicted_0", "Predicted_1"])
+        confusion_matrix_csv_content = confusion_matrix_df.to_csv()
         return {
-            "coefficients": params[1:], # Exclude intercept
-            "intercept": params[0],
+            "coefficients": coefficients,
+            "intercept": intercept,
             "train_predictions": train_preds,
             "training_accuracy": acc,
             "confusion_matrix": cm,
             "loss_history": loss_hist,
-            "test_predictions": None
+            "test_predictions": None,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content,
+            "confusion_matrix_csv": confusion_matrix_csv_content
         }
     elif classification == 'log_reg_withmodel':
-        # classify_with_model returns: model.coef_, train_preds, acc, cm, loss_history
-        coefs, train_preds, acc, cm, loss_hist = classify_with_model(x_transformed, y)
+        coefs, train_preds, acc, cm, loss_hist = classify_with_model(x_transformed, y) # coefs is already flattened
+        predictions_df = pd.DataFrame({"Actual": y.flatten(), "Predicted": train_preds})
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(coefs))], "Coefficient": coefs})
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
+        confusion_matrix_df = pd.DataFrame(cm, index=["Actual_0", "Actual_1"], columns=["Predicted_0", "Predicted_1"])
+        confusion_matrix_csv_content = confusion_matrix_df.to_csv()
+
         return {
             "coefficients": coefs,
             "train_predictions": train_preds,
             "training_accuracy": acc,
             "confusion_matrix": cm,
             "loss_history": loss_hist,
-            "test_predictions": None # Sklearn model does not predict on test by default here
+            "test_predictions": None,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content,
+            "confusion_matrix_csv": confusion_matrix_csv_content
         }
     elif classification == 'log_regwithnn':
-        # classify_with_nn returns: train_preds_binary, test_preds_binary, acc, cm, loss_history
         train_preds, test_preds, acc, cm, loss_hist = classify_with_nn(x_transformed, y, x_test_transformed, epochs, batch_size, n1, n2, n3)
+        preds_data = {"Actual": y.flatten(), "Train_Predicted": train_preds}
+        if test_preds is not None:
+            preds_data["Test_Predicted"] = test_preds
+        predictions_df = pd.DataFrame(preds_data)
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        confusion_matrix_df = pd.DataFrame(cm, index=["Actual_0", "Actual_1"], columns=["Predicted_0", "Predicted_1"])
+        confusion_matrix_csv_content = confusion_matrix_df.to_csv()
         return {
             "train_predictions": train_preds,
             "test_predictions": test_preds,
             "training_accuracy": acc,
             "confusion_matrix": cm,
             "loss_history": loss_hist,
-            "coefficients": None # NNs don't have simple coefficients
+            "coefficients": None,
+            "predictions_csv": predictions_csv_content,
+            "confusion_matrix_csv": confusion_matrix_csv_content
         }
     elif classification == 'classify with tree':
-        # classify_with_tree returns: train_preds, test_preds, acc, cm, feature_importances, loss_history
         train_preds, test_preds, acc, cm, feature_importances, loss_hist = classify_with_tree(x_transformed, x_test_transformed, y, metric, max_depth)
+        preds_data = {"Actual": y.flatten(), "Train_Predicted": train_preds}
+        if test_preds is not None:
+            preds_data["Test_Predicted"] = test_preds
+        predictions_df = pd.DataFrame(preds_data)
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        coefficients_df = pd.DataFrame({"Feature": [f"PC{i+1}" for i in range(len(feature_importances))], "Importance": feature_importances})
+        coefficients_csv_content = coefficients_df.to_csv(index=False)
+        confusion_matrix_df = pd.DataFrame(cm, index=["Actual_0", "Actual_1"], columns=["Predicted_0", "Predicted_1"])
+        confusion_matrix_csv_content = confusion_matrix_df.to_csv()
         return {
             "train_predictions": train_preds,
             "test_predictions": test_preds,
             "training_accuracy": acc,
             "confusion_matrix": cm,
             "coefficients": feature_importances, # Use feature importances as coefficients for trees
-            "loss_history": loss_hist
+            "loss_history": loss_hist,
+            "predictions_csv": predictions_csv_content,
+            "coefficients_csv": coefficients_csv_content,
+            "confusion_matrix_csv": confusion_matrix_csv_content
         }
     elif classification == 'classify with SVC':
-        # classify_with_svc returns: train_pred, test_preds, acc, cm, None, loss_history
         train_preds, test_preds, acc, cm, _, loss_hist = classify_with_svc(x_transformed, x_test_transformed, y)
+        preds_data = {"Actual": y.flatten(), "Train_Predicted": train_preds}
+        if test_preds is not None:
+            preds_data["Test_Predicted"] = test_preds
+        predictions_df = pd.DataFrame(preds_data)
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        confusion_matrix_df = pd.DataFrame(cm, index=["Actual_0", "Actual_1"], columns=["Predicted_0", "Predicted_1"])
+        confusion_matrix_csv_content = confusion_matrix_df.to_csv()
         return {
             "train_predictions": train_preds,
             "test_predictions": test_preds,
             "training_accuracy": acc,
             "confusion_matrix": cm,
             "coefficients": None, # SVC does not have simple coefficients
-            "loss_history": loss_hist
+            "loss_history": loss_hist,
+            "predictions_csv": predictions_csv_content,
+            "confusion_matrix_csv": confusion_matrix_csv_content
         }
     elif classification == 'classify with nn multiclass':
-        # classify_with_nn_multiclass returns: train_preds.tolist(), test_preds.tolist(), acc, cm, history.history['loss']
         train_preds, test_preds, acc, cm, loss_hist = classify_with_nn_multiclass(x_transformed, y, x_test_transformed, epochs, batch_size, n1, n2, n3)
+        preds_data = {"Actual": y.flatten(), "Train_Predicted": train_preds}
+        if test_preds is not None:
+            preds_data["Test_Predicted"] = test_preds
+        predictions_df = pd.DataFrame(preds_data)
+        predictions_csv_content = predictions_df.to_csv(index=False)
+        # Confusion matrix for multiclass will have dynamic dimensions
+        num_classes = len(np.unique(y.flatten()))
+        index_labels = [f"Actual_{i}" for i in range(num_classes)]
+        column_labels = [f"Predicted_{i}" for i in range(num_classes)]
+        confusion_matrix_df = pd.DataFrame(cm, index=index_labels, columns=column_labels)
+        confusion_matrix_csv_content = confusion_matrix_df.to_csv()
         return {
             "train_predictions": train_preds,
             "test_predictions": test_preds,
             "training_accuracy": acc,
             "confusion_matrix": cm,
             "loss_history": loss_hist,
-            "coefficients": None # NNs don't have simple coefficients
+            "coefficients": None,
+            "predictions_csv": predictions_csv_content,
+            "confusion_matrix_csv": confusion_matrix_csv_content
         }
     elif regression == 'regression with svr':
-        # predict_with_svr returns: train_pred, test_preds, mse, None, loss_history
         train_preds, test_preds, mse, _, loss_hist = predict_with_svr(x_transformed, x_test_transformed, y)
+        preds_data = {"Actual": y.flatten(), "Train_Predicted": train_preds}
+        if test_preds is not None:
+            preds_data["Test_Predicted"] = test_preds
+        predictions_df = pd.DataFrame(preds_data)
+        predictions_csv_content = predictions_df.to_csv(index=False)
         return {
             "train_predictions": train_preds,
             "test_predictions": test_preds,
             "training_mse": mse,
-            "coefficients": None, # SVR does not have simple coefficients
-            "loss_history": loss_hist
+            "coefficients": None,
+            "loss_history": loss_hist,
+            "predictions_csv": predictions_csv_content
         }
     else:
         raise ValueError("Invalid regression or classification model specified.")
@@ -551,6 +660,6 @@ if __name__ == '__main__':
         port = int(port_str)
     else:
         port = 5000 # Default port for local development
-   
+
     debug_mode = os.environ.get("FLASK_DEBUG", "1") == "1" # Default to debug true for local
     app.run(debug=debug_mode, host='0.0.0.0', port=port)
